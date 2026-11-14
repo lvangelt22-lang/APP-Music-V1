@@ -1,0 +1,280 @@
+package com.ejemplo.velosync
+
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.URL
+
+data class Track(
+    val id: String,
+    val title: String,
+    val artist: String,
+    val uri: String,
+    val isOnline: Boolean
+)
+
+class MainActivity : ComponentActivity() {
+    private var exoPlayer: ExoPlayer? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        forceMaxRefreshRate() // Forzar los Hz máximos de la pantalla (120Hz)
+
+        exoPlayer = ExoPlayer.Builder(this).build()
+
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF8AB4F8), background = Color(0xFF09090C))) {
+                VeloSyncApp(exoPlayer = exoPlayer!!)
+            }
+        }
+    }
+
+    private fun forceMaxRefreshRate() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            display?.supportedModes?.maxByOrNull { it.refreshRate }?.let { mode ->
+                window.attributes = window.attributes.apply { preferredDisplayModeId = mode.modeId }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        exoPlayer?.release()
+    }
+}
+
+@Composable
+fun VeloSyncApp(exoPlayer: ExoPlayer) {
+    val coroutineScope = rememberCoroutineScope()
+    var searchQuery by remember { mutableStateOf("Synthwave") }
+    var trackList by remember { mutableStateOf<List<Track>>(emptyList()) }
+    var currentTrack by remember { mutableStateOf<Track?>(null) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    fun searchOnlineMusic(query: String) {
+        coroutineScope.launch {
+            isLoading = true
+            trackList = withContext(Dispatchers.IO) {
+                val list = mutableListOf<Track>()
+                try {
+                    val url = URL("https://discoveryprovider.audius.co/v1/tracks/search?query=${query.replace(" ", "%20")}")
+                    val dataArray = JSONObject(url.readText()).getJSONArray("data")
+                    for (i in 0 until dataArray.length()) {
+                        val item = dataArray.getJSONObject(i)
+                        val id = item.getString("id")
+                        val title = item.getString("title")
+                        val artist = item.getJSONObject("user").getString("name")
+                        val streamUrl = "https://discoveryprovider.audius.co/v1/tracks/$id/stream"
+                        list.add(Track(id, title, artist, streamUrl, isOnline = true))
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                list
+            }
+            isLoading = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        searchOnlineMusic(searchQuery)
+    }
+
+    Scaffold(
+        containerColor = Color(0xFF0B0B10),
+        bottomBar = {
+            currentTrack?.let { track ->
+                PlayerBottomBar(track = track, isPlaying = isPlaying, onTogglePlay = {
+                    if (exoPlayer.isPlaying) {
+                        exoPlayer.pause()
+                        isPlaying = false
+                    } else {
+                        exoPlayer.play()
+                        isPlaying = true
+                    }
+                })
+            }
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 16.dp)
+        ) {
+            Spacer(modifier = Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                alignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "VeloSync ⚡ 120Hz",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White
+                )
+                IconButton(onClick = {
+                    // Simulación de carga local en máxima calidad Hi-Fi
+                    trackList = listOf(
+                        Track("local_1", "Audio FLAC Local Hi-Fi", "Máxima Calidad SD/Almacenamiento", "file:///sdcard/Download/song.flac", false)
+                    )
+                }) {
+                    Icon(Icons.Rounded.FolderOpen, contentDescription = "Local", tint = Color(0xFF8AB4F8))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Buscar rolas en línea a alta velocidad...") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                trailingIcon = {
+                    IconButton(onClick = { searchOnlineMusic(searchQuery) }) {
+                        Icon(Icons.Rounded.Search, contentDescription = "Buscar", tint = Color.White)
+                    }
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { searchOnlineMusic(searchQuery) })
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (isLoading) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Color(0xFF8AB4F8))
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(trackList, key = { it.id }) { track ->
+                        TrackCard(
+                            track = track,
+                            isSelected = track.id == currentTrack?.id,
+                            onClick = {
+                                currentTrack = track
+                                isPlaying = true
+                                exoPlayer.stop()
+                                exoPlayer.setMediaItem(MediaItem.fromUri(track.uri))
+                                exoPlayer.prepare()
+                                exoPlayer.play()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TrackCard(track: Track, isSelected: Boolean, onClick: () -> Unit) {
+    val scale by animateFloatAsState(
+        targetValue = if (isSelected) 1.02f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "scale"
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .scale(scale)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (isSelected) Color(0xFF1E1E2C) else Color(0xFF13131A))
+            .clickable { onClick() }
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF2A2A3D)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White)
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = track.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(
+                text = if (track.isOnline) track.artist else "🎵 Local Hi-Fi / Lossless",
+                color = Color.Gray,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+fun PlayerBottomBar(track: Track, isPlaying: Boolean, onTogglePlay: () -> Unit) {
+    Surface(
+        color = Color(0xFF161622),
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        tonalElevation = 12.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = track.title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(text = track.artist, color = Color.LightGray, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            }
+            IconButton(onClick = onTogglePlay) {
+                Icon(
+                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+        }
+    }
+}
